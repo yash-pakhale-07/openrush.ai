@@ -14,10 +14,18 @@
     <header class="dashboard-topbar">
       <a class="brand" href="index.html"><span class="brand-mark">↗</span><span>relay<span class="brand-dot">.</span></span></a>
       <nav><a href="supplier.html">Supplier view</a><a href="rider.html">Rider view</a><a class="active" href="receiver.html">Receiver view</a></nav>
-      <div class="user-pill"><span class="avatar">HS</span> Harbor Shelter</div>
+      <div class="topbar-actions">
+        <button class="verification-pill-btn" id="topbar-verif-btn" type="button" title="View Verification Status">
+          <span class="verification-dot status-contact-pending" id="topbar-verif-dot"></span>
+          <span id="topbar-verif-label">Contact Pending</span>
+        </button>
+        <div class="user-pill"><span class="avatar">HS</span> Harbor Shelter</div>
+      </div>
     </header>
 
     <main class="dashboard-page-main">
+      <div id="verification-banner-container"></div>
+
       <div class="dashboard-page-heading">
         <div><div class="eyebrow eyebrow-dark">Receiver workspace · Intake open</div><h1>Turn urgent need<br /><em>into a clear alert.</em></h1></div>
         <p>Define exactly what your shelter can safely receive. Relay coordinates supply and rider capacity around your deadline.</p>
@@ -157,6 +165,216 @@
           <div class="demand-form-actions">
             <button class="button button-ghost" id="cancel-intake-modal" type="button">Cancel</button>
             <button class="button button-primary" id="submit-intake-btn" type="submit"><span>Save intake settings</span><span>↗</span></button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <!-- Two-Step Receiver Verification Modal -->
+    <div class="demand-modal-backdrop" id="verification-modal" hidden>
+      <section class="demand-modal" role="dialog" aria-modal="true" aria-labelledby="verif-modal-title" style="max-width:680px;">
+        <button class="demand-modal-close" id="close-verification-modal" type="button" aria-label="Close verification modal">×</button>
+        <div class="eyebrow eyebrow-dark">Receiver trust &amp; safety · Relay network</div>
+        <h2 id="verif-modal-title">Shelter<br /><em>verification.</em></h2>
+        <p class="demand-modal-intro">Two-step verification confirms your shelter identity and enables publishing live demand alerts to donors and riders.</p>
+
+        <div class="demo-callout-box">
+          <b>⚠️ Prototype Demo Simulation Notice</b>
+          This prototype simulates two-step verification. Do not submit sensitive real credentials. For Step 1 contact verification, use demo OTP code <strong>123456</strong>.
+        </div>
+
+        <div class="verification-steps-header">
+          <div class="step-tab-indicator" id="step-tab-1"><span class="step-num">1</span> Contact Phone &amp; OTP</div>
+          <div class="step-tab-indicator" id="step-tab-2"><span class="step-num">2</span> Shelter Org Details</div>
+          <div class="step-tab-indicator" id="step-tab-3"><span class="step-num">3</span> Status &amp; Admin Review</div>
+        </div>
+
+        <!-- STEP 1: CONTACT VERIFICATION -->
+        <div id="verif-step-1-panel">
+          <form id="contact-verif-form" novalidate>
+            <div class="demand-form-grid">
+              <label class="demand-field full-width" for="verif-phone">Receiver Mobile Phone <span>*</span>
+                <input id="verif-phone" name="phone" type="tel" placeholder="e.g. +1 (555) 234-5678" required />
+                <small class="field-error" data-error-for="verif-phone"></small>
+              </label>
+            </div>
+
+            <div style="margin-top:14px; display:flex; gap:10px; align-items:center;">
+              <button class="button button-ghost" id="btn-send-otp" type="button">Send Verification Code</button>
+              <span id="otp-sent-indicator" style="font-family:'DM Mono', monospace; font-size:9px; color:var(--green); display:none;">✓ Simulated code sent! Demo OTP: <strong>123456</strong></span>
+            </div>
+
+            <div id="verif-otp-container" style="margin-top:18px; border-top:1px solid var(--line); padding-top:16px;" hidden>
+              <label class="demand-field full-width" for="verif-otp">Enter 6-digit OTP Code <span>*</span>
+                <div class="otp-input-group">
+                  <input class="otp-code-input" id="verif-otp" name="otp" type="text" maxlength="6" inputmode="numeric" placeholder="123456" />
+                  <button class="button button-primary" id="btn-verify-otp" type="button" style="padding:11px 18px;"><span>Verify Code</span><span>↗</span></button>
+                </div>
+                <small style="color:var(--muted); font-size:9px; display:block; margin-top:4px;">Demo mode: Use code <strong>123456</strong></small>
+                <small class="field-error" data-error-for="verif-otp" id="otp-error-msg"></small>
+              </label>
+            </div>
+
+            <div class="demand-form-feedback" id="contact-verif-feedback" role="status" aria-live="polite"></div>
+          </form>
+        </div>
+
+        <!-- STEP 2: SHELTER / ORG DETAILS -->
+        <div id="verif-step-2-panel" hidden>
+          <div class="status-banner" style="margin-bottom:14px;">
+            <span></span> Contact phone verified: <strong id="step2-verified-phone-display" style="margin-left:4px;">+1 (555) 234-5678</strong>
+          </div>
+
+          <form id="org-verif-form" novalidate>
+            <div class="demand-form-grid">
+              <label class="demand-field full-width" for="verif-org-name">Organization / Shelter Legal Name <span>*</span>
+                <input id="verif-org-name" name="orgName" type="text" placeholder="e.g. Harbor Shelter Relief Inc." required />
+                <small class="field-error" data-error-for="verif-org-name"></small>
+              </label>
+
+              <label class="demand-field full-width" for="verif-address">Shelter Intake Facility Address <span>*</span>
+                <input id="verif-address" name="shelterAddress" type="text" placeholder="e.g. 42 Harbor Way, South Entrance, NY 10001" required />
+                <small class="field-error" data-error-for="verif-address"></small>
+              </label>
+
+              <label class="demand-field" for="verif-contact-name">Contact Person Full Name <span>*</span>
+                <input id="verif-contact-name" name="contactPerson" type="text" placeholder="e.g. Sarah Jenkins" required />
+                <small class="field-error" data-error-for="verif-contact-name"></small>
+              </label>
+
+              <label class="demand-field" for="verif-doc-ref">Supporting Document Ref / Tax ID <span>*</span>
+                <input id="verif-doc-ref" name="documentRef" type="text" placeholder="e.g. EIN 12-3456789 or Shelter Lic #NY-88" required />
+                <small class="field-error" data-error-for="verif-doc-ref"></small>
+              </label>
+            </div>
+
+            <div class="dispatch-detail-box" style="margin-top:16px;">
+              <b>Verification Submission Summary</b>
+              <p>Submitting this form enters your shelter into the verification review queue. Network administrators verify facilities prior to active demand publishing to ensure perishable donations reach vetted relief organizations.</p>
+            </div>
+
+            <div class="demand-form-feedback" id="org-verif-feedback" role="status" aria-live="polite"></div>
+            <div class="demand-form-actions">
+              <button class="button button-ghost" id="btn-back-to-step1" type="button">← Back to Phone</button>
+              <button class="button button-primary" id="btn-submit-review" type="submit">
+                <span>Submit for Review</span><span>↗</span>
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- STEP 3: STATUS & DEMO ADMIN SIMULATOR -->
+        <div id="verif-step-3-panel" hidden>
+          <div class="dispatch-detail-box" id="verif-status-summary-box">
+            <!-- Dynamic status & details populated via JS -->
+          </div>
+
+          <div id="rejection-callout-container"></div>
+          <div id="verified-success-container"></div>
+
+          <!-- Prototype Admin Review Simulator -->
+          <div class="admin-sim-panel">
+            <div class="admin-sim-header">
+              <b>🛠 Prototype Demo Admin Simulator</b>
+              <span class="badge-tag">Demo Controls</span>
+            </div>
+            <p style="color:var(--muted); font-size:11px; margin:0 0 10px; line-height:1.5;">
+              Use these prototype controls to test how shelter approval or rejection dynamically impacts dashboard capabilities, badge states, and demand alert permissions.
+            </p>
+
+            <label class="demand-field full-width" for="admin-rejection-reason-input" style="margin-bottom:8px;">Optional Rejection Reason
+              <input id="admin-rejection-reason-input" type="text" placeholder="e.g. Supporting document reference expired or address unverifiable" />
+            </label>
+
+            <div class="admin-sim-actions">
+              <button class="button button-primary" id="btn-admin-approve" type="button" style="background:#2f734a; padding:10px 16px;">
+                ✓ Approve Shelter (Verify)
+              </button>
+              <button class="button button-ghost" id="btn-admin-reject" type="button" style="color:#d96548; border-color:#d96548; padding:10px 16px;">
+                ✕ Reject Application
+              </button>
+              <button class="button button-ghost" id="btn-admin-fasttrack" type="button" style="padding:10px 16px;">
+                ⚡ Fast-Track Emergency Approval
+              </button>
+              <button class="button button-ghost" id="btn-admin-reset" type="button" style="padding:10px 16px;">
+                ↺ Reset Verification
+              </button>
+            </div>
+          </div>
+
+          <div class="demand-form-actions" style="margin-top:20px;">
+            <button class="button button-ghost" id="btn-close-verif-view" type="button">Done</button>
+            <button class="button button-primary" id="btn-create-demand-from-verif" type="button" hidden>
+              <span>Create Demand Alert Now</span><span>↗</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Verification Gatekeeping / Restriction Modal -->
+    <div class="demand-modal-backdrop" id="verification-gate-modal" hidden>
+      <section class="demand-modal" role="dialog" aria-modal="true" aria-labelledby="gate-modal-title" style="max-width:540px;">
+        <button class="demand-modal-close" id="close-gate-modal" type="button" aria-label="Close modal">×</button>
+        <div class="eyebrow eyebrow-dark">Safety requirement · Vetted organizations only</div>
+        <h2 id="gate-modal-title">Verification<br /><em>required.</em></h2>
+        <p class="demand-modal-intro" id="gate-modal-explanation">
+          To protect community trust and food safety, only verified shelters can broadcast active demand alerts to donor kitchens and volunteer riders.
+        </p>
+
+        <div class="dispatch-detail-box" id="gate-status-detail-box">
+          <!-- Populated dynamically: Contact Pending / Review Pending / Rejected -->
+        </div>
+
+        <div class="emergency-review-box">
+          <b>⚡ Immediate Emergency Operation?</b>
+          If your facility is responding to a disaster, sudden displacement, or power failure, you can request an expedited <strong>Emergency Review</strong>.
+        </div>
+
+        <div class="demand-form-actions" style="justify-content:space-between; flex-wrap:wrap;">
+          <button class="button button-ghost" id="gate-btn-emergency" type="button">Request Emergency Review ⚡</button>
+          <div style="display:flex; gap:8px;">
+            <button class="button button-ghost" id="gate-btn-cancel" type="button">Cancel</button>
+            <button class="button button-primary" id="gate-btn-proceed" type="button">
+              <span>Complete Verification</span><span>↗</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Emergency Expedited Review Modal -->
+    <div class="demand-modal-backdrop" id="emergency-review-modal" hidden>
+      <section class="demand-modal" role="dialog" aria-modal="true" aria-labelledby="emergency-modal-title" style="max-width:560px;">
+        <button class="demand-modal-close" id="close-emergency-modal" type="button" aria-label="Close emergency modal">×</button>
+        <div class="eyebrow eyebrow-dark">Crisis response · Fast-track intake</div>
+        <h2 id="emergency-modal-title">Emergency<br /><em>review request.</em></h2>
+        <p class="demand-modal-intro">Submit an urgent justification for fast-tracked verification during active relief emergencies.</p>
+
+        <form id="emergency-review-form" novalidate>
+          <div class="demand-form-grid">
+            <label class="demand-field full-width" for="emergency-incident-title">Emergency Incident / Disaster Type <span>*</span>
+              <input id="emergency-incident-title" name="incidentTitle" type="text" placeholder="e.g. Winter Storm Power Failure / Flood Evacuation" required />
+              <small class="field-error" data-error-for="emergency-incident-title"></small>
+            </label>
+
+            <label class="demand-field full-width" for="emergency-justification">Crisis Justification &amp; Intake Need <span>*</span>
+              <textarea id="emergency-justification" name="justification" rows="4" placeholder="Describe the acute community emergency, affected population size, and why immediate unverified broadcasting is necessary." required></textarea>
+              <small class="field-error" data-error-for="emergency-justification"></small>
+            </label>
+          </div>
+
+          <div class="demo-callout-box">
+            <b>Demo Prototype Simulation:</b>
+            Submitting this form flags your shelter profile for urgent review and simulates immediate fast-track approval.
+          </div>
+
+          <div class="demand-form-feedback" id="emergency-feedback" role="status" aria-live="polite"></div>
+          <div class="demand-form-actions">
+            <button class="button button-ghost" id="cancel-emergency-btn" type="button">Cancel</button>
+            <button class="button button-primary" id="submit-emergency-btn" type="submit">
+              <span>Submit &amp; Fast-Track Review</span><span>⚡</span>
+            </button>
           </div>
         </form>
       </section>

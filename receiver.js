@@ -1,12 +1,51 @@
 /**
  * Relay - Shelter / Receiver Dashboard Logic
  * Uses RelayStore for shared state, persistent storage, and real-time synchronization.
+ * Includes Two-Step Receiver Verification System with Simulated Contact OTP,
+ * Organization Review, Gatekeeping, and Emergency Fast-Track Verification.
  */
 
 (function () {
   'use strict';
 
-  // Modal elements
+  const VERIFICATION_STORAGE_KEY = 'relay:receiver-verification-v1';
+
+  // --- VERIFICATION STATE & PERSISTENCE ---
+  const DEFAULT_VERIFICATION = {
+    status: 'Contact Pending', // 'Contact Pending' | 'Review Pending' | 'Verified' | 'Rejected'
+    step: 1, // 1 (Phone & OTP), 2 (Org Details), 3 (Review & Admin Simulator)
+    phone: '',
+    otpVerified: false,
+    orgName: 'Harbor Shelter Relief Inc.',
+    shelterAddress: 'South Entrance, 42 Harbor Way, NY 10001',
+    contactPerson: 'Sarah Jenkins (Intake Director)',
+    documentRef: 'NY-SHELTER-REG-2026-88',
+    rejectionReason: '',
+    submittedAt: null,
+    reviewedAt: null,
+    isEmergencyFastTrack: false
+  };
+
+  function readVerificationState() {
+    try {
+      const raw = window.localStorage.getItem(VERIFICATION_STORAGE_KEY);
+      if (!raw) return { ...DEFAULT_VERIFICATION };
+      return { ...DEFAULT_VERIFICATION, ...JSON.parse(raw) };
+    } catch (e) {
+      return { ...DEFAULT_VERIFICATION };
+    }
+  }
+
+  function saveVerificationState(vState) {
+    try {
+      window.localStorage.setItem(VERIFICATION_STORAGE_KEY, JSON.stringify(vState));
+    } catch (e) {
+      console.warn('Failed to persist verification state', e);
+    }
+    updateVerificationUI(vState);
+  }
+
+  // --- DOM ELEMENTS: Modals & Forms ---
   const demandModal = document.querySelector('#demand-alert-modal');
   const demandForm = document.querySelector('#demand-alert-form');
   const demandCategory = document.querySelector('#demand-category');
@@ -24,6 +63,68 @@
   const intakeEntranceInput = document.querySelector('#intake-entrance-input');
   const intakeFeedback = document.querySelector('#intake-form-feedback');
   const submitIntakeBtn = document.querySelector('#submit-intake-btn');
+
+  // Verification DOM elements
+  const verifModal = document.querySelector('#verification-modal');
+  const verifGateModal = document.querySelector('#verification-gate-modal');
+  const emergencyModal = document.querySelector('#emergency-review-modal');
+  const topbarVerifBtn = document.querySelector('#topbar-verif-btn');
+  const topbarVerifDot = document.querySelector('#topbar-verif-dot');
+  const topbarVerifLabel = document.querySelector('#topbar-verif-label');
+  const verifBannerContainer = document.querySelector('#verification-banner-container');
+
+  // Step 1: Contact
+  const verifPhoneInput = document.querySelector('#verif-phone');
+  const btnSendOtp = document.querySelector('#btn-send-otp');
+  const otpSentIndicator = document.querySelector('#otp-sent-indicator');
+  const verifOtpContainer = document.querySelector('#verif-otp-container');
+  const verifOtpInput = document.querySelector('#verif-otp');
+  const btnVerifyOtp = document.querySelector('#btn-verify-otp');
+  const otpErrorMsg = document.querySelector('#otp-error-msg');
+  const contactVerifFeedback = document.querySelector('#contact-verif-feedback');
+
+  // Step 2: Org Details
+  const step2PhoneDisplay = document.querySelector('#step2-verified-phone-display');
+  const orgVerifForm = document.querySelector('#org-verif-form');
+  const verifOrgName = document.querySelector('#verif-org-name');
+  const verifAddress = document.querySelector('#verif-address');
+  const verifContactName = document.querySelector('#verif-contact-name');
+  const verifDocRef = document.querySelector('#verif-doc-ref');
+  const orgVerifFeedback = document.querySelector('#org-verif-feedback');
+  const btnBackToStep1 = document.querySelector('#btn-back-to-step1');
+
+  // Step 3: Status & Admin Simulator
+  const verifStatusSummaryBox = document.querySelector('#verif-status-summary-box');
+  const rejectionCalloutContainer = document.querySelector('#rejection-callout-container');
+  const verifiedSuccessContainer = document.querySelector('#verified-success-container');
+  const adminRejectionReasonInput = document.querySelector('#admin-rejection-reason-input');
+  const btnAdminApprove = document.querySelector('#btn-admin-approve');
+  const btnAdminReject = document.querySelector('#btn-admin-reject');
+  const btnAdminFasttrack = document.querySelector('#btn-admin-fasttrack');
+  const btnAdminReset = document.querySelector('#btn-admin-reset');
+  const btnCreateDemandFromVerif = document.querySelector('#btn-create-demand-from-verif');
+  const btnCloseVerifView = document.querySelector('#btn-close-verif-view');
+
+  // Step indicators & panels
+  const stepTab1 = document.querySelector('#step-tab-1');
+  const stepTab2 = document.querySelector('#step-tab-2');
+  const stepTab3 = document.querySelector('#step-tab-3');
+  const step1Panel = document.querySelector('#verif-step-1-panel');
+  const step2Panel = document.querySelector('#verif-step-2-panel');
+  const step3Panel = document.querySelector('#verif-step-3-panel');
+
+  // Gatekeeping modal elements
+  const gateStatusDetailBox = document.querySelector('#gate-status-detail-box');
+  const gateBtnProceed = document.querySelector('#gate-btn-proceed');
+  const gateBtnEmergency = document.querySelector('#gate-btn-emergency');
+  const gateBtnCancel = document.querySelector('#gate-btn-cancel');
+
+  // Emergency review modal elements
+  const emergencyForm = document.querySelector('#emergency-review-form');
+  const emergencyIncidentTitle = document.querySelector('#emergency-incident-title');
+  const emergencyJustification = document.querySelector('#emergency-justification');
+  const emergencyFeedback = document.querySelector('#emergency-feedback');
+  const cancelEmergencyBtn = document.querySelector('#cancel-emergency-btn');
 
   // Dashboard content elements
   const demandList = document.querySelector('#demand-alert-list');
@@ -61,6 +162,453 @@
     return String(value || '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
   }
 
+  // --- UI RENDER: Verification System ---
+  function updateVerificationUI(vState) {
+    // 1. Update Topbar pill
+    if (topbarVerifLabel) topbarVerifLabel.textContent = vState.status;
+    if (topbarVerifDot) {
+      topbarVerifDot.className = 'verification-dot';
+      if (vState.status === 'Verified') topbarVerifDot.classList.add('status-verified');
+      else if (vState.status === 'Review Pending') topbarVerifDot.classList.add('status-review-pending');
+      else if (vState.status === 'Rejected') topbarVerifDot.classList.add('status-rejected');
+      else topbarVerifDot.classList.add('status-contact-pending');
+    }
+
+    // 2. Update Dashboard Banner
+    if (verifBannerContainer) {
+      verifBannerContainer.innerHTML = '';
+      if (vState.status === 'Contact Pending') {
+        verifBannerContainer.innerHTML = `
+          <div class="verification-dashboard-banner">
+            <div>
+              <b>⚠️ Shelter Verification Required · Safety &amp; Trust Gate</b>
+              <p>Complete two-step verification (contact phone &amp; shelter registry) to enable publishing active demand alerts.</p>
+            </div>
+            <div class="verification-banner-actions">
+              <button class="queue-action-btn" id="banner-verify-btn" type="button">Complete Verification ↗</button>
+              <button class="queue-action-btn secondary" id="banner-emergency-btn" type="button">Emergency Review ⚡</button>
+            </div>
+          </div>
+        `;
+      } else if (vState.status === 'Review Pending') {
+        const isEmergency = vState.isEmergencyFastTrack;
+        verifBannerContainer.innerHTML = `
+          <div class="verification-dashboard-banner is-pending">
+            <div>
+              <b>⏳ Verification Review Pending ${isEmergency ? '· ⚡ Emergency Expedited' : ''}</b>
+              <p>Your shelter credentials are under review by network administrators. Demand alert publishing unlocks upon approval.</p>
+            </div>
+            <div class="verification-banner-actions">
+              <button class="queue-action-btn" id="banner-review-status-btn" type="button">View Review Status ↗</button>
+              ${!isEmergency ? `<button class="queue-action-btn secondary" id="banner-emergency-btn" type="button">Emergency Expedite ⚡</button>` : ''}
+            </div>
+          </div>
+        `;
+      } else if (vState.status === 'Rejected') {
+        verifBannerContainer.innerHTML = `
+          <div class="verification-dashboard-banner is-rejected">
+            <div>
+              <b>✕ Shelter Verification Rejected</b>
+              <p>${vState.rejectionReason ? `Reason: ${escapeHtml(vState.rejectionReason)}` : 'Documentation could not be verified.'} Update your information and resubmit.</p>
+            </div>
+            <div class="verification-banner-actions">
+              <button class="queue-action-btn danger" id="banner-reapply-btn" type="button">Update &amp; Resubmit ↗</button>
+            </div>
+          </div>
+        `;
+      } else if (vState.status === 'Verified') {
+        verifBannerContainer.innerHTML = `
+          <div class="verification-dashboard-banner is-verified">
+            <div>
+              <b>✓ Verified Relief Facility · Intake Authorized</b>
+              <p>Your shelter identity is verified. Active demand alerts are broadcast directly to donor kitchens and volunteer riders.</p>
+            </div>
+            <div class="verification-banner-actions">
+              <button class="queue-action-btn secondary" id="banner-view-verif-btn" type="button">View Credentials ↗</button>
+            </div>
+          </div>
+        `;
+      }
+
+      // Bind banner action buttons
+      document.querySelector('#banner-verify-btn')?.addEventListener('click', () => openVerificationModal(1));
+      document.querySelector('#banner-review-status-btn')?.addEventListener('click', () => openVerificationModal(3));
+      document.querySelector('#banner-reapply-btn')?.addEventListener('click', () => openVerificationModal(2));
+      document.querySelector('#banner-view-verif-btn')?.addEventListener('click', () => openVerificationModal(3));
+      document.querySelector('#banner-emergency-btn')?.addEventListener('click', openEmergencyModal);
+    }
+
+    // 3. Update Modal Panels & Step Indicators
+    if (stepTab1 && stepTab2 && stepTab3) {
+      stepTab1.className = 'step-tab-indicator';
+      stepTab2.className = 'step-tab-indicator';
+      stepTab3.className = 'step-tab-indicator';
+
+      if (vState.step === 1) {
+        stepTab1.classList.add('active');
+        if (step1Panel) step1Panel.hidden = false;
+        if (step2Panel) step2Panel.hidden = true;
+        if (step3Panel) step3Panel.hidden = true;
+      } else if (vState.step === 2) {
+        stepTab1.classList.add('completed');
+        stepTab2.classList.add('active');
+        if (step1Panel) step1Panel.hidden = true;
+        if (step2Panel) step2Panel.hidden = false;
+        if (step3Panel) step3Panel.hidden = true;
+        if (step2PhoneDisplay) step2PhoneDisplay.textContent = vState.phone || 'Phone verified';
+      } else if (vState.step === 3) {
+        stepTab1.classList.add('completed');
+        stepTab2.classList.add('completed');
+        stepTab3.classList.add('active');
+        if (step1Panel) step1Panel.hidden = true;
+        if (step2Panel) step2Panel.hidden = true;
+        if (step3Panel) step3Panel.hidden = false;
+      }
+    }
+
+    // 4. Update Step 3 Details
+    if (verifStatusSummaryBox) {
+      let statusTagClass = 'badge-tag';
+      if (vState.status === 'Verified') statusTagClass = 'badge-tag live';
+      else if (vState.status === 'Rejected') statusTagClass = 'badge-tag alert';
+
+      verifStatusSummaryBox.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <b>Shelter Verification Credentials</b>
+          <span class="${statusTagClass}">${escapeHtml(vState.status)}</span>
+        </div>
+        <p>
+          Organization: <strong>${escapeHtml(vState.orgName || 'Harbor Shelter Relief Inc.')}</strong><br/>
+          Facility Address: ${escapeHtml(vState.shelterAddress || '42 Harbor Way, NY')}<br/>
+          Contact Person: ${escapeHtml(vState.contactPerson || 'Sarah Jenkins')}<br/>
+          Verified Phone: <strong>${escapeHtml(vState.phone || 'Pending')}</strong><br/>
+          Document Reference: <code>${escapeHtml(vState.documentRef || 'Pending')}</code><br/>
+          ${vState.submittedAt ? `<small style="color:var(--muted); font-size:9px;">Submitted: ${formatDeadline(vState.submittedAt)}</small>` : ''}
+        </p>
+      `;
+    }
+
+    if (rejectionCalloutContainer) {
+      rejectionCalloutContainer.innerHTML = '';
+      if (vState.status === 'Rejected') {
+        rejectionCalloutContainer.innerHTML = `
+          <div class="recalculation-alert" style="margin-top:12px;">
+            <b>✕ Application Review Decision: REJECTED</b>
+            ${vState.rejectionReason ? `Reason: ${escapeHtml(vState.rejectionReason)}<br/>` : ''}
+            Please check your organization details or contact credentials and resubmit.
+            <div style="margin-top:10px;">
+              <button class="queue-action-btn danger" id="btn-edit-resubmit" type="button">Edit Details &amp; Resubmit ↗</button>
+            </div>
+          </div>
+        `;
+        document.querySelector('#btn-edit-resubmit')?.addEventListener('click', () => {
+          vState.step = 2;
+          saveVerificationState(vState);
+        });
+      }
+    }
+
+    if (verifiedSuccessContainer) {
+      verifiedSuccessContainer.innerHTML = '';
+      if (vState.status === 'Verified') {
+        verifiedSuccessContainer.innerHTML = `
+          <div class="demo-callout-box" style="margin-top:12px; background:#f4faf1; border-color:#59966a;">
+            <b>✓ Shelter Organization Successfully Verified</b>
+            Your facility is authorized to broadcast real-time demand alerts to local kitchens and food suppliers.
+          </div>
+        `;
+        if (btnCreateDemandFromVerif) btnCreateDemandFromVerif.hidden = false;
+      } else {
+        if (btnCreateDemandFromVerif) btnCreateDemandFromVerif.hidden = true;
+      }
+    }
+
+    // 5. Update Gate Modal Content
+    if (gateStatusDetailBox) {
+      let statusDesc = '';
+      if (vState.status === 'Contact Pending') {
+        statusDesc = 'You have not completed mobile phone contact verification yet.';
+      } else if (vState.status === 'Review Pending') {
+        statusDesc = 'Your verification application has been submitted and is currently under administrative safety review.';
+      } else if (vState.status === 'Rejected') {
+        statusDesc = `Your previous verification application was rejected (${vState.rejectionReason || 'details unverifiable'}). Please update and resubmit.`;
+      }
+      gateStatusDetailBox.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <b>Current Status: ${escapeHtml(vState.status)}</b>
+          <span class="badge-tag ${vState.status === 'Rejected' ? 'alert' : ''}">${escapeHtml(vState.status)}</span>
+        </div>
+        <p>${escapeHtml(statusDesc)}</p>
+      `;
+    }
+  }
+
+  // --- MODAL CONTROLS: Verification Modal ---
+  function openVerificationModal(targetStep = 1) {
+    const vState = readVerificationState();
+    // If target step is specified, update state
+    if (targetStep >= 1 && targetStep <= 3) {
+      vState.step = targetStep;
+      saveVerificationState(vState);
+    }
+    // Pre-fill inputs
+    if (verifPhoneInput) verifPhoneInput.value = vState.phone || '';
+    if (verifOrgName) verifOrgName.value = vState.orgName || 'Harbor Shelter Relief Inc.';
+    if (verifAddress) verifAddress.value = vState.shelterAddress || 'South Entrance, 42 Harbor Way, NY 10001';
+    if (verifContactName) verifContactName.value = vState.contactPerson || 'Sarah Jenkins (Intake Director)';
+    if (verifDocRef) verifDocRef.value = vState.documentRef || 'NY-SHELTER-REG-2026-88';
+
+    if (verifOtpContainer) {
+      verifOtpContainer.hidden = !vState.phone;
+    }
+
+    updateVerificationUI(vState);
+
+    if (verifModal) {
+      verifModal.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  function closeVerificationModal() {
+    if (verifModal) {
+      verifModal.hidden = true;
+      document.body.style.overflow = '';
+    }
+  }
+
+  // Gatekeeping Modal
+  function openGateModal() {
+    const vState = readVerificationState();
+    updateVerificationUI(vState);
+    if (verifGateModal) {
+      verifGateModal.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  function closeGateModal() {
+    if (verifGateModal) {
+      verifGateModal.hidden = true;
+      document.body.style.overflow = '';
+    }
+  }
+
+  // Emergency Review Modal
+  function openEmergencyModal() {
+    closeGateModal();
+    if (emergencyIncidentTitle) emergencyIncidentTitle.value = '';
+    if (emergencyJustification) emergencyJustification.value = '';
+    if (emergencyFeedback) emergencyFeedback.textContent = '';
+    if (emergencyModal) {
+      emergencyModal.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+  }
+
+  function closeEmergencyModal() {
+    if (emergencyModal) {
+      emergencyModal.hidden = true;
+      document.body.style.overflow = '';
+    }
+  }
+
+  // --- STEP 1: CONTACT VERIFICATION LOGIC ---
+  btnSendOtp?.addEventListener('click', () => {
+    const phone = (verifPhoneInput?.value || '').trim();
+    if (!phone || phone.replace(/\D/g, '').length < 10) {
+      setFieldError('verif-phone', 'Please enter a valid phone number (at least 10 digits).');
+      return;
+    }
+    clearFormErrors(document.querySelector('#contact-verif-form'), contactVerifFeedback);
+
+    if (verifOtpContainer) verifOtpContainer.hidden = false;
+    if (otpSentIndicator) otpSentIndicator.style.display = 'inline';
+    if (verifOtpInput) {
+      verifOtpInput.focus();
+      if (!verifOtpInput.value) verifOtpInput.value = '123456';
+    }
+    showToast('Simulated SMS sent. Demo OTP code: 123456');
+  });
+
+  btnVerifyOtp?.addEventListener('click', () => {
+    const phone = (verifPhoneInput?.value || '').trim();
+    const otp = (verifOtpInput?.value || '').trim();
+
+    if (!phone || phone.replace(/\D/g, '').length < 10) {
+      setFieldError('verif-phone', 'Enter a valid phone number first.');
+      return;
+    }
+
+    if (!otp) {
+      if (otpErrorMsg) otpErrorMsg.textContent = 'Please enter the 6-digit verification code.';
+      verifOtpInput?.closest('.demand-field')?.classList.add('has-error');
+      return;
+    }
+
+    if (otp !== '123456') {
+      if (otpErrorMsg) otpErrorMsg.textContent = 'Invalid verification code. For this prototype, please use demo code 123456.';
+      verifOtpInput?.closest('.demand-field')?.classList.add('has-error');
+      return;
+    }
+
+    // Valid OTP
+    if (otpErrorMsg) otpErrorMsg.textContent = '';
+    verifOtpInput?.closest('.demand-field')?.classList.remove('has-error');
+
+    const vState = readVerificationState();
+    vState.phone = phone;
+    vState.otpVerified = true;
+    vState.step = 2; // Advance to Step 2
+    saveVerificationState(vState);
+    showToast('✓ Phone number verified successfully! Proceeding to Shelter Organization details.');
+  });
+
+  // --- STEP 2: ORG VERIFICATION LOGIC ---
+  btnBackToStep1?.addEventListener('click', () => {
+    const vState = readVerificationState();
+    vState.step = 1;
+    saveVerificationState(vState);
+  });
+
+  orgVerifForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    clearFormErrors(orgVerifForm, orgVerifFeedback);
+
+    const orgName = (verifOrgName?.value || '').trim();
+    const address = (verifAddress?.value || '').trim();
+    const contact = (verifContactName?.value || '').trim();
+    const docRef = (verifDocRef?.value || '').trim();
+
+    let isValid = true;
+    if (!orgName) { setFieldError('verif-org-name', 'Organization name is required.'); isValid = false; }
+    if (!address) { setFieldError('verif-address', 'Facility address is required.'); isValid = false; }
+    if (!contact) { setFieldError('verif-contact-name', 'Contact person name is required.'); isValid = false; }
+    if (!docRef) { setFieldError('verif-doc-ref', 'Document reference / Tax ID is required.'); isValid = false; }
+
+    if (!isValid) {
+      if (orgVerifFeedback) orgVerifFeedback.textContent = 'Please fill out all required organization fields.';
+      return;
+    }
+
+    const vState = readVerificationState();
+    vState.orgName = orgName;
+    vState.shelterAddress = address;
+    vState.contactPerson = contact;
+    vState.documentRef = docRef;
+    vState.status = 'Review Pending';
+    vState.step = 3;
+    vState.submittedAt = new Date().toISOString();
+    vState.rejectionReason = '';
+
+    saveVerificationState(vState);
+    showToast('Verification application submitted! Placed in administrative review queue.');
+  });
+
+  // --- STEP 3: DEMO ADMIN CONTROLS SIMULATOR ---
+  btnAdminApprove?.addEventListener('click', () => {
+    const vState = readVerificationState();
+    vState.status = 'Verified';
+    vState.reviewedAt = new Date().toISOString();
+    vState.rejectionReason = '';
+    saveVerificationState(vState);
+    showToast('✓ [Admin Simulator] Shelter APPROVED and verified! Active demand alert creation unlocked.');
+  });
+
+  btnAdminReject?.addEventListener('click', () => {
+    const reasonInput = adminRejectionReasonInput?.value?.trim();
+    const reason = reasonInput || 'Document reference could not be verified in state relief registry.';
+    const vState = readVerificationState();
+    vState.status = 'Rejected';
+    vState.rejectionReason = reason;
+    vState.reviewedAt = new Date().toISOString();
+    saveVerificationState(vState);
+    showToast(`✕ [Admin Simulator] Shelter REJECTED. Reason: "${reason}"`);
+  });
+
+  btnAdminFasttrack?.addEventListener('click', () => {
+    const vState = readVerificationState();
+    vState.status = 'Verified';
+    vState.isEmergencyFastTrack = true;
+    vState.reviewedAt = new Date().toISOString();
+    vState.rejectionReason = '';
+    saveVerificationState(vState);
+    showToast('⚡ [Admin Simulator] Emergency fast-track approval granted! Live demand broadcasting enabled.');
+  });
+
+  btnAdminReset?.addEventListener('click', () => {
+    const vState = { ...DEFAULT_VERIFICATION };
+    saveVerificationState(vState);
+    if (adminRejectionReasonInput) adminRejectionReasonInput.value = '';
+    if (verifOtpContainer) verifOtpContainer.hidden = true;
+    if (otpSentIndicator) otpSentIndicator.style.display = 'none';
+    showToast('↺ Verification state reset to Contact Pending.');
+  });
+
+  btnCreateDemandFromVerif?.addEventListener('click', () => {
+    closeVerificationModal();
+    openDemandModal();
+  });
+
+  btnCloseVerifView?.addEventListener('click', closeVerificationModal);
+
+  // --- GATEKEEPING BUTTONS ---
+  gateBtnProceed?.addEventListener('click', () => {
+    closeGateModal();
+    const vState = readVerificationState();
+    openVerificationModal(vState.step || 1);
+  });
+
+  gateBtnEmergency?.addEventListener('click', openEmergencyModal);
+  gateBtnCancel?.addEventListener('click', closeGateModal);
+
+  // --- EMERGENCY REVIEW FORM ---
+  emergencyForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    clearFormErrors(emergencyForm, emergencyFeedback);
+
+    const title = (emergencyIncidentTitle?.value || '').trim();
+    const justification = (emergencyJustification?.value || '').trim();
+
+    let isValid = true;
+    if (!title) { setFieldError('emergency-incident-title', 'Emergency incident title is required.'); isValid = false; }
+    if (!justification) { setFieldError('emergency-justification', 'Justification is required for emergency intake.'); isValid = false; }
+
+    if (!isValid) return;
+
+    const vState = readVerificationState();
+    vState.isEmergencyFastTrack = true;
+    // In demo mode, emergency request fast-tracks shelter to Verified status immediately
+    vState.status = 'Verified';
+    vState.step = 3;
+    vState.reviewedAt = new Date().toISOString();
+    vState.rejectionReason = '';
+    saveVerificationState(vState);
+
+    closeEmergencyModal();
+    showToast('⚡ Emergency review submitted & approved! Shelter granted active demand broadcasting.');
+
+    // Immediately open demand alert modal so emergency alert can be published without friction
+    window.setTimeout(openDemandModal, 400);
+  });
+
+  cancelEmergencyBtn?.addEventListener('click', closeEmergencyModal);
+
+  // Topbar and Modal triggers
+  topbarVerifBtn?.addEventListener('click', () => {
+    const vState = readVerificationState();
+    openVerificationModal(vState.step || 1);
+  });
+
+  document.querySelector('#close-verification-modal')?.addEventListener('click', closeVerificationModal);
+  document.querySelector('#close-gate-modal')?.addEventListener('click', closeGateModal);
+  document.querySelector('#close-emergency-modal')?.addEventListener('click', closeEmergencyModal);
+
+  verifModal?.addEventListener('click', (e) => { if (e.target === verifModal) closeVerificationModal(); });
+  verifGateModal?.addEventListener('click', (e) => { if (e.target === verifGateModal) closeGateModal(); });
+  emergencyModal?.addEventListener('click', (e) => { if (e.target === emergencyModal) closeEmergencyModal(); });
+
+  // --- EXISTING DASHBOARD LOGIC (DEMAND & INTAKE) ---
   function renderDashboard(state) {
     const shelterName = state.receiverProfile?.name || 'Harbor Shelter';
     const shelterDemands = (state.demands || []).filter(d => d.receiverId === shelterName || !d.receiverId || d.receiverId === 'Harbor Shelter');
@@ -184,6 +732,7 @@
   }
 
   function clearFormErrors(form, feedback) {
+    if (!form) return;
     form.querySelectorAll('.demand-field').forEach((field) => field.classList.remove('has-error'));
     form.querySelectorAll('.field-error').forEach((error) => { error.textContent = ''; });
     if (feedback) {
@@ -245,6 +794,16 @@
     return { isValid, values };
   }
 
+  // --- GATEKEEPING: CREATE DEMAND ALERT ---
+  function handleCreateDemandClick() {
+    const vState = readVerificationState();
+    if (vState.status === 'Verified') {
+      openDemandModal();
+    } else {
+      openGateModal();
+    }
+  }
+
   function openDemandModal() {
     setDeadlineMinimum();
     clearFormErrors(demandForm, demandFeedback);
@@ -283,7 +842,7 @@
   }
 
   // Bind Event Listeners
-  document.querySelector('#create-demand-alert')?.addEventListener('click', openDemandModal);
+  document.querySelector('#create-demand-alert')?.addEventListener('click', handleCreateDemandClick);
   document.querySelector('#close-demand-alert')?.addEventListener('click', closeDemandModal);
   document.querySelector('#cancel-demand-alert')?.addEventListener('click', closeDemandModal);
   demandModal?.addEventListener('click', (e) => { if (e.target === demandModal) closeDemandModal(); });
@@ -297,6 +856,9 @@
     if (e.key === 'Escape') {
       if (demandModal && !demandModal.hidden) closeDemandModal();
       if (intakeModal && !intakeModal.hidden) closeIntakeModal();
+      if (verifModal && !verifModal.hidden) closeVerificationModal();
+      if (verifGateModal && !verifGateModal.hidden) closeGateModal();
+      if (emergencyModal && !emergencyModal.hidden) closeEmergencyModal();
     }
   });
 
@@ -310,6 +872,15 @@
   demandForm?.addEventListener('submit', (e) => {
     e.preventDefault();
     if (isSubmittingDemand) return;
+
+    // Double check verification
+    const vState = readVerificationState();
+    if (vState.status !== 'Verified') {
+      closeDemandModal();
+      openGateModal();
+      return;
+    }
+
     const { isValid, values } = validateDemandForm();
     if (!isValid) return;
 
@@ -380,6 +951,10 @@
       if (intakeFeedback) intakeFeedback.textContent = err.message;
     }
   });
+
+  // Initial load
+  const initialVerification = readVerificationState();
+  updateVerificationUI(initialVerification);
 
   // Subscribe to live store updates
   RelayStore.subscribe(renderDashboard);
